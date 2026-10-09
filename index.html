@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0f6e56">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>BCTC Attendance (Offline)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+--bg:#f6f5f1;--card:#fff;--ink:#1d2b28;--mute:#6b7773;--line:#e2e0d8;--acc:#0f6e56;--accbg:#e1f3ec;--bad:#b3392b;--badbg:#fbe9e6}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#171b1a;--card:#212726;--ink:#e8eeec;--mute:#93a09b;--line:#323a38;--acc:#4fc3a1;--accbg:#1c3a31;--bad:#f08a7c;--badbg:#412622}}
+:root[data-theme="dark"]{--bg:#171b1a;--card:#212726;--ink:#e8eeec;--mute:#93a09b;--line:#323a38;--acc:#4fc3a1;--accbg:#1c3a31;--bad:#f08a7c;--badbg:#412622}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:640px;margin:0 auto;padding:16px 14px 40px}
+h1{font-size:20px;margin:4px 0 12px}
+.tabs{display:flex;gap:6px;margin-bottom:14px}
+.tabs button{flex:1;padding:10px 4px;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:10px;font:inherit;font-weight:600}
+.tabs button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:12px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+input,select{font:inherit;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink);min-width:0}
+input.grow{flex:1}
+.btn{padding:10px 14px;border:0;border-radius:10px;background:var(--acc);color:#fff;font:inherit;font-weight:600}
+.btn.ghost{background:transparent;color:var(--bad);border:1px solid var(--line);padding:6px 10px;font-size:14px}
+.stu{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 0;border-bottom:1px solid var(--line)}
+.stu:last-child{border-bottom:0}
+.tog{min-width:92px;padding:8px 10px;border-radius:999px;border:1px solid var(--line);font:inherit;font-weight:600;background:var(--accbg);color:var(--acc)}
+.tog.a{background:var(--badbg);color:var(--bad)}
+.sum{width:100%;border-collapse:collapse;font-size:15px}
+.sum th,.sum td{padding:8px 4px;text-align:center;border-bottom:1px solid var(--line)}
+.sum th:first-child,.sum td:first-child{text-align:left}
+.sum th{color:var(--mute);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.sum td:first-child,.sum th:first-child{position:sticky;left:0;background:var(--card)}
+.sum td.t{font-weight:700}
+.day{display:flex;align-items:center;gap:3px;font-size:14px;padding:6px 8px;border:1px solid var(--line);border-radius:8px}
+.drow{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.drow .day{min-width:72px}
+.tp{display:flex;gap:4px}
+.miss{color:var(--bad);font-weight:700}
+.mute{color:var(--mute);font-size:14px}
+.wrap{overflow-x:auto}
+#toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:999px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none}
+#toast.show{opacity:1}
+</style>
+</head>
+<body>
+<main>
+<h1>BCTC Attendance</h1>
+<div class="tabs">
+  <button data-t="mark" class="on">Mark</button>
+  <button data-t="sum">Monthly</button>
+  <button data-t="all">Overview</button>
+  <button data-t="stu">Students</button>
+</div>
+<div id="view"></div>
+</main>
+<div id="toast"></div>
+<script>
+const DEPTS=["Computer","Spoken English"];
+let students=[], months={}, tab="mark", ready=false;
+function ymAdd(n){const d=new Date();const x=new Date(d.getFullYear(),d.getMonth()+n,1);return x.getFullYear()+"-"+String(x.getMonth()+1).padStart(2,"0")}
+let allFrom=ymAdd(-8), allTo=ymAdd(0), allDept=DEPTS[0];
+let mDate=today(), mDept=DEPTS[0], marks={}, sumMonth=today().slice(0,7), sumDept=DEPTS[0];
+const view=document.getElementById("view");
+
+function today(){return new Date().toLocaleDateString("en-CA")}
+function esc(s){const d=document.createElement("div");d.textContent=s;return d.innerHTML}
+function toast(t){const e=document.getElementById("toast");e.textContent=t;e.classList.add("show");setTimeout(()=>e.classList.remove("show"),1800)}
+
+function lsGet(k){try{return JSON.parse(localStorage.getItem(k))}catch(e){return null}}
+function lsSet(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true}catch(e){toast("Could not save");return false}}
+async function getMonth(ym){
+  if(!months[ym])months[ym]=(lsGet("att-"+ym)||{}).records||{};
+  return months[ym];
+}
+async function saveStudents(){return lsSet("students",students)}
+
+document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{
+  tab=b.dataset.t;detailId=null;
+  document.querySelectorAll(".tabs button").forEach(x=>x.classList.toggle("on",x===b));
+  render();
+});
+
+async function render(){
+  if(!ready){view.innerHTML='<p class="mute">Loading…</p>';return}
+  if(tab==="mark")await renderMark();
+  else if(tab==="sum")await renderSum();
+  else if(tab==="all")await renderAll();
+  else if(detailId)await renderDetail();
+  else renderStu();
+}
+
+const DAYN=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+let showAll=false, editId=null, detailId=null;
+function t12(t){if(!t)return"";let [h,m]=t.split(":").map(Number);const ap=h>=12?"PM":"AM";h=h%12||12;return h+":"+String(m).padStart(2,"0")+" "+ap}
+function getTimes(s){
+  if(s.times)return s.times;
+  const t={};(s.days||[]).forEach(d=>t[d]=s.time||"");return t;
+}
+function sched(s){
+  const t=getTimes(s),ds=Object.keys(t).map(Number).sort((a,b)=>a-b);
+  return ds.length?ds.map(d=>DAYN[d]+(t[d]?" "+t12(t[d]):"")).join(", "):"Days not set";
+}
+function stats(m,id){let p=0,a=0;for(const d in m){const v=m[d][id];if(v==="P")p++;else if(v==="A")a++}return{p,a,t:p+a}}
+
+async function renderMark(){
+  const rec=(await getMonth(mDate.slice(0,7)))[mDate]||{};
+  const wd=new Date(mDate+"T00:00:00").getDay();
+  const dl=students.filter(s=>s.dept===mDept);
+  const list=(showAll?dl:dl.filter(s=>rec[s.id]||(active(s)&&(!s.days||!s.days.length||s.days.includes(wd))))).sort((a,b)=>(getTimes(a)[wd]||"").localeCompare(getTimes(b)[wd]||""));
+  marks={};list.forEach(s=>marks[s.id]=rec[s.id]||"P");
+  view.innerHTML=`<div class="card">
+    <div class="row"><input type="date" id="d" value="${mDate}"><b>${DAYN[wd]}</b><select id="dp">${DEPTS.map(d=>`<option ${d===mDept?"selected":""}>${d}</option>`).join("")}</select></div>
+    <label class="mute"><input type="checkbox" id="sa" ${showAll?"checked":""}> Show all students (for extra or make-up class)</label>
+    ${list.length?list.map(s=>`<div class="stu"><div>${esc(s.name)}<div class="mute">${getTimes(s)[wd]?"Entry "+t12(getTimes(s)[wd]):"Not scheduled on "+DAYN[wd]}</div></div><button class="tog ${marks[s.id]==="A"?"a":""}" data-id="${s.id}">${marks[s.id]==="A"?"Absent":"Present"}</button></div>`).join(""):`<p class="mute">No ${mDept} students are scheduled on ${DAYN[wd]}.</p>`}
+    </div>
+    ${list.length?'<button class="btn" id="save" style="width:100%">Save attendance</button><p class="mute">Everyone starts as Present — tap a name to mark Absent.</p>':""}`;
+  document.getElementById("d").onchange=e=>{if(e.target.value){mDate=e.target.value;render()}};
+  document.getElementById("dp").onchange=e=>{mDept=e.target.value;render()};
+  document.getElementById("sa").onchange=e=>{showAll=e.target.checked;render()};
+  view.querySelectorAll(".tog").forEach(b=>b.onclick=()=>{
+    const id=b.dataset.id;marks[id]=marks[id]==="A"?"P":"A";
+    b.classList.toggle("a",marks[id]==="A");b.textContent=marks[id]==="A"?"Absent":"Present";
+  });
+  const sv=document.getElementById("save");
+  if(sv)sv.onclick=async()=>{
+    const ym=mDate.slice(0,7),m=await getMonth(ym);
+    m[mDate]=Object.assign({},m[mDate]||{},marks);
+    if(lsSet("att-"+ym,{records:m}))toast("Saved");
+  };
+}
+
+async function renderSum(){
+  const m=await getMonth(sumMonth);
+  const list=students.filter(s=>s.dept===sumDept);
+  const rows=list.map(s=>{const x=stats(m,s.id);
+    return `<tr><td>${esc(s.name)}<div class="mute">${sched(s)}</div></td><td>${x.p}</td><td class="${x.a?"miss":""}">${x.a}</td><td>${x.t}</td><td>${x.t?Math.round(x.p*100/x.t):0}%</td></tr>`}).join("");
+  view.innerHTML=`<div class="card"><div class="row"><input type="month" id="mo" value="${sumMonth}"><select id="sd">${DEPTS.map(d=>`<option ${d===sumDept?"selected":""}>${d}</option>`).join("")}</select></div>
+    <p class="mute">Counted from the days you saved for each student.</p>
+    ${list.length?`<div class="wrap"><table class="sum"><tr><th>Student</th><th>Attended</th><th>Missed</th><th>Total</th><th>%</th></tr>${rows}</table></div>`:'<p class="mute">No students in this department.</p>'}</div>`;
+  document.getElementById("mo").onchange=e=>{if(e.target.value){sumMonth=e.target.value;render()}};
+  document.getElementById("sd").onchange=e=>{sumDept=e.target.value;render()};
+}
+
+function monthList(a,b){
+  const out=[];let [y,m]=a.split("-").map(Number);const [y2,m2]=b.split("-").map(Number);
+  while((y<y2||(y===y2&&m<=m2))&&out.length<36){out.push(y+"-"+String(m).padStart(2,"0"));m++;if(m>12){m=1;y++}}
+  return out;
+}
+async function renderAll(){
+  const ms=monthList(allFrom,allTo);
+  const list=students.filter(s=>s.dept===allDept);
+  const data={};for(const ym of ms)data[ym]=await getMonth(ym);
+  const lab=ym=>{const [y,m]=ym.split("-").map(Number);return new Date(y,m-1,1).toLocaleString("en",{month:"short"})+" '"+String(y).slice(2)};
+  const head=`<tr><th>Student</th>${ms.map(ym=>`<th>${lab(ym)}</th>`).join("")}<th>Attended</th><th>Missed</th><th>%</th></tr>`;
+  const rows=list.map(s=>{
+    let tp=0,tt=0;
+    const cells=ms.map(ym=>{const x=stats(data[ym],s.id);tp+=x.p;tt+=x.t;return `<td>${x.t?x.p+"/"+x.t:"–"}</td>`}).join("");
+    const miss=tt-tp;
+    return `<tr><td>${esc(s.name)}</td>${cells}<td class="t">${tp}</td><td class="${miss?"miss":""}">${miss}</td><td>${tt?Math.round(tp*100/tt):0}%</td></tr>`;
+  }).join("");
+  view.innerHTML=`<div class="card"><div class="row"><input type="month" id="f" value="${allFrom}"><span class="mute">to</span><input type="month" id="t" value="${allTo}"></div>
+    <div class="row"><select id="ad">${DEPTS.map(d=>`<option ${d===allDept?"selected":""}>${d}</option>`).join("")}</select></div>
+    <p class="mute">Each month shows attended / classes. Slide the table sideways to see all months.</p>
+    ${list.length?`<div class="wrap"><table class="sum">${head}${rows}</table></div>`:'<p class="mute">No students in this department.</p>'}</div>`;
+  document.getElementById("f").onchange=e=>{if(e.target.value){allFrom=e.target.value;render()}};
+  document.getElementById("t").onchange=e=>{if(e.target.value){allTo=e.target.value;render()}};
+  document.getElementById("ad").onchange=e=>{allDept=e.target.value;render()};
+}
+
+function timePick(t,k){
+  let h12="",mi="",ap="AM";
+  if(t){const [h,m]=t.split(":").map(Number);ap=h>=12?"PM":"AM";h12=h%12||12;mi=m}
+  const mins=[];for(let m=0;m<60;m+=5)mins.push(m);if(mi!==""&&!mins.includes(mi)){mins.push(mi);mins.sort((a,b)=>a-b)}
+  const o=(v,l,sel)=>`<option value="${v}" ${sel?"selected":""}>${l}</option>`;
+  return `<select id="th${k}">${o("","Hour",h12==="")}${[...Array(12)].map((_,i)=>o(i+1,i+1,h12===i+1)).join("")}</select>
+  <select id="tmn${k}">${mins.map(m=>o(m,String(m).padStart(2,"0"),mi===m)).join("")}</select>
+  <select id="tap${k}">${o("AM","AM",ap==="AM")}${o("PM","PM",ap==="PM")}</select>`;
+}
+const MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const pad=n=>String(n).padStart(2,"0");
+function fmtD(iso){return new Date(iso+"T00:00:00").toLocaleDateString("en-GB",{day:"numeric",month:"short",year:"numeric"})}
+function courseEnd(iso,n){const d=new Date(iso+"T00:00:00");return new Date(d.getFullYear(),d.getMonth()+n,d.getDate()-1).toLocaleDateString("en-CA")}
+function active(s){return (!s.joined||mDate>=s.joined)&&(!s.joined||!s.months||mDate<=courseEnd(s.joined,s.months))}
+function courseLine(s){return s.joined?"Joined "+fmtD(s.joined)+(s.months?" · "+s.months+" month"+(s.months>1?"s":""):""):"Joining date not set"}
+function dateSel(v){
+  let d="",m="",y="";if(v){[y,m,d]=v.split("-").map(Number)}
+  const cy=new Date().getFullYear(),o=(a,l,sel)=>`<option value="${a}" ${sel?"selected":""}>${l}</option>`;
+  return `<select id="jd">${o("","Day",!d)}${[...Array(31)].map((_,i)=>o(i+1,i+1,d===i+1)).join("")}</select>
+  <select id="jm">${o("","Month",!m)}${MON.map((n,i)=>o(i+1,n,m===i+1)).join("")}</select>
+  <select id="jy">${o("","Year",!y)}${[...Array(8)].map((_,i)=>o(cy-5+i,cy-5+i,y===cy-5+i)).join("")}</select>`;
+}
+function durSel(v){return `<select id="cm"><option value="">Select</option>${[...Array(36)].map((_,i)=>`<option value="${i+1}" ${v===i+1?"selected":""}>${i+1} month${i?"s":""}</option>`).join("")}</select>`}
+
+async function renderDetail(){
+  const s=students.find(x=>x.id===detailId);
+  if(!s){detailId=null;return renderStu()}
+  const t=getTimes(s),days=Object.keys(t).map(Number),td=today();
+  const end=s.joined&&s.months?courseEnd(s.joined,s.months):"";
+  const last=end&&end<td?end:td;
+  const from=(s.joined||allFrom+"-01").slice(0,7);
+  let status="Course dates not set";
+  if(end){status=td>end?"Course completed":td<s.joined?"Starts "+fmtD(s.joined):Math.ceil((new Date(end+"T00:00:00")-new Date(td+"T00:00:00"))/864e5)+" days left"}
+  let rows="",tp=0,tt=0;const absent=[];
+  for(const ym of monthList(from,last.slice(0,7))){
+    const m=await getMonth(ym),x=stats(m,s.id);tp+=x.p;tt+=x.t;
+    for(const d in m)if(m[d][s.id]==="A")absent.push(d);
+    const [y,mo]=ym.split("-").map(Number);
+    rows+=`<tr><td>${MON[mo-1]} ${y}</td><td>${x.p}</td><td class="${x.a?"miss":""}">${x.a}</td><td>${x.t}</td><td>${x.t?Math.round(x.p*100/x.t):0}%</td></tr>`;
+  }
+  absent.sort();
+  let plan="";
+  if(end&&days.length){
+    let all=0,done=0;
+    for(let d=new Date(s.joined+"T00:00:00");d.toLocaleDateString("en-CA")<=end;d.setDate(d.getDate()+1)){
+      if(days.includes(d.getDay())){all++;if(d.toLocaleDateString("en-CA")<=td)done++}
+    }
+    plan=`<p>Scheduled classes in course: <b>${all}</b><br>Held so far: <b>${done}</b> · Remaining: <b>${all-done}</b>${done>tt?`<br>Not marked yet: <b class="miss">${done-tt}</b>`:""}</p>`;
+  }
+  view.innerHTML=`<button class="btn ghost" id="bk2" style="color:var(--acc);margin-bottom:10px">← Back</button>
+  <div class="card"><b style="font-size:18px">${esc(s.name)}</b><div class="mute">${s.dept} · ${sched(s)}</div>
+    <p>${courseLine(s)}<br>${end?"Course ends <b>"+fmtD(end)+"</b> · ":""}<b>${status}</b></p>${plan}</div>
+  <div class="card"><b>Attendance</b>
+    <p>Attended <b>${tp}</b> · Missed <b class="${tt-tp?"miss":""}">${tt-tp}</b> · Total ${tt} · <b>${tt?Math.round(tp*100/tt):0}%</b></p>
+    <div class="wrap"><table class="sum"><tr><th>Month</th><th>Attended</th><th>Missed</th><th>Total</th><th>%</th></tr>${rows}</table></div></div>
+  <div class="card"><b>Absent dates</b><p class="mute">${absent.length?absent.map(fmtD).join(" · "):"None"}</p></div>`;
+  document.getElementById("bk2").onclick=()=>{detailId=null;render()};
+}
+
+function renderStu(){
+  const e=students.find(s=>s.id===editId)||{name:"",dept:DEPTS[0]};
+  const et=getTimes(e);
+  view.innerHTML=`<div class="card"><b>${editId?"Edit student":"Add student"}</b>
+    <div class="row" style="margin-top:8px"><input class="grow" id="nm" placeholder="Student name" value="${esc(e.name).replace(/"/g,"&quot;")}"><select id="dp">${DEPTS.map(d=>`<option ${d===e.dept?"selected":""}>${d}</option>`).join("")}</select></div>
+    <div class="mute">Joining date</div><div class="row">${dateSel(e.joined)}</div>
+    <div class="row"><span class="mute">Course duration</span>${durSel(e.months)}</div>
+    <div class="mute">Class days and entry time for each day</div>
+    ${DAYN.map((n,k)=>{const on=k in et;return `<div class="drow"><label class="day"><input type="checkbox" value="${k}" ${on?"checked":""}> ${n}</label><span class="tp" id="tp${k}" style="${on?"":"display:none"}">${timePick(et[k],k)}</span></div>`}).join("")}
+    <div class="row"><button class="btn" id="add">${editId?"Save changes":"Add"}</button>${editId?'<button class="btn ghost" id="cn" style="color:var(--ink)">Cancel</button>':""}</div></div>
+    <div class="card"><b>Backup</b><p class="mute">Data lives on this device. Save a backup file regularly, and use Restore to load it on another phone.</p>
+    <div class="row"><button class="btn" id="bk">Save backup</button><button class="btn" id="rs">Restore</button><input type="file" id="rf" accept=".json" hidden></div></div>
+    ${DEPTS.map(d=>{const l=students.filter(s=>s.dept===d);return `<div class="card"><b>${d}</b> <span class="mute">(${l.length})</span>${l.map(s=>`<div class="stu"><div>${esc(s.name)}<div class="mute">${sched(s)}</div><div class="mute">${courseLine(s)}</div></div><div class="row" style="margin:0"><button class="btn ghost" data-dt="${s.id}" style="color:var(--acc)">Details</button><button class="btn ghost" data-ed="${s.id}" style="color:var(--acc)">Edit</button><button class="btn ghost" data-id="${s.id}">Remove</button></div></div>`).join("")}</div>`}).join("")}`;
+  document.getElementById("add").onclick=async()=>{
+    const n=document.getElementById("nm").value.trim();
+    const times={};let bad=false;
+    view.querySelectorAll(".drow .day input:checked").forEach(x=>{
+      const k=+x.value,hv=+document.getElementById("th"+k).value;
+      if(!hv){bad=true;return}
+      times[k]=String((hv%12)+(document.getElementById("tap"+k).value==="PM"?12:0)).padStart(2,"0")+":"+String(document.getElementById("tmn"+k).value).padStart(2,"0");
+    });
+    const days=Object.keys(times).map(Number).sort((a,b)=>a-b);
+    const jd=+document.getElementById("jd").value,jm=+document.getElementById("jm").value,jy=+document.getElementById("jy").value;
+    let joined="";if(jd&&jm&&jy&&new Date(jy,jm-1,jd).getMonth()===jm-1)joined=jy+"-"+pad(jm)+"-"+pad(jd);
+    const months=+document.getElementById("cm").value;
+    if(!n)return toast("Enter the student's name");
+    if(!joined)return toast("Select a valid joining date");
+    if(!months)return toast("Select course duration");
+    if(!days.length)return toast("Select class days");
+    if(bad)return toast("Set entry time for each selected day");
+    const dept=document.getElementById("dp").value;
+    if(editId){Object.assign(students.find(s=>s.id===editId),{name:n,dept,days,times,time:times[days[0]],joined,months});editId=null}
+    else students.push({id:"s"+Date.now().toString(36)+Math.random().toString(36).slice(2,5),name:n,dept,days,times,time:times[days[0]],joined,months});
+    if(await saveStudents())render();
+  };
+  view.querySelectorAll(".drow .day input").forEach(c=>c.onchange=()=>{
+    const k=c.value,tp=document.getElementById("tp"+k);tp.style.display=c.checked?"":"none";
+    if(c.checked&&!+document.getElementById("th"+k).value){
+      const o=[...view.querySelectorAll(".drow .day input:checked")].map(x=>x.value).find(v=>v!==k&&+document.getElementById("th"+v).value);
+      if(o!==undefined)["th","tmn","tap"].forEach(p=>document.getElementById(p+k).value=document.getElementById(p+o).value);
+    }
+  });
+  view.querySelectorAll("[data-dt]").forEach(b=>b.onclick=()=>{detailId=b.dataset.dt;render();window.scrollTo(0,0)});
+  const cn=document.getElementById("cn");if(cn)cn.onclick=()=>{editId=null;render()};
+  view.querySelectorAll("[data-ed]").forEach(b=>b.onclick=()=>{editId=b.dataset.ed;render();window.scrollTo(0,0)});
+  document.getElementById("bk").onclick=()=>{
+    const out={students,att:{}};
+    for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k.startsWith("att-"))out.att[k]=lsGet(k)}
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(new Blob([JSON.stringify(out)],{type:"application/json"}));
+    a.download="bctc-attendance-"+today()+".json";a.click();
+  };
+  const rf=document.getElementById("rf");
+  document.getElementById("rs").onclick=()=>rf.click();
+  rf.onchange=async()=>{
+    try{
+      const d=JSON.parse(await rf.files[0].text());
+      if(!Array.isArray(d.students)||!confirm("Replace all data on this device with the backup?"))return;
+      lsSet("students",d.students);
+      Object.keys(d.att||{}).forEach(k=>lsSet(k,d.att[k]));
+      students=d.students;months={};toast("Restored");render();
+    }catch(e){toast("Not a valid backup file")}
+  };
+  view.querySelectorAll("[data-id]").forEach(b=>b.onclick=async()=>{
+    const s=students.find(x=>x.id===b.dataset.id);
+    if(!confirm("Remove "+s.name+"?"))return;
+    students=students.filter(x=>x.id!==s.id);
+    if(await saveStudents())render();
+  });
+}
+
+students=lsGet("students")||[];ready=true;render();
+if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
+</script>
+</body>
+</html>

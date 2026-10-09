@@ -138,12 +138,13 @@ async function renderSum(){
   const m=await getMonth(sumMonth);
   const list=students.filter(s=>s.dept===sumDept);
   const rows=list.map(s=>{const x=stats(m,s.id);
-    return `<tr><td>${esc(s.name)}<div class="mute">${sched(s)}</div></td><td>${x.p}</td><td class="${x.a?"miss":""}">${x.a}</td><td>${x.t}</td><td>${x.t?Math.round(x.p*100/x.t):0}%</td></tr>`}).join("");
+    return `<tr><td>${esc(s.name)}<div class="mute">${sched(s)}</div></td><td>${x.p}</td><td class="${x.a?"miss":""}">${x.a}</td><td>${x.t}</td><td>${x.t?Math.round(x.p*100/x.t):0}%</td><td><button class="btn ghost" data-wa="${s.id}" style="padding:4px 8px">💬</button></td></tr>`}).join("");
   view.innerHTML=`<div class="card"><div class="row"><input type="month" id="mo" value="${sumMonth}"><select id="sd">${DEPTS.map(d=>`<option ${d===sumDept?"selected":""}>${d}</option>`).join("")}</select></div>
     <p class="mute">Counted from the days you saved for each student.</p>
-    ${list.length?`<div class="wrap"><table class="sum"><tr><th>Student</th><th>Attended</th><th>Missed</th><th>Total</th><th>%</th></tr>${rows}</table></div>`:'<p class="mute">No students in this department.</p>'}</div>`;
+    ${list.length?`<div class="wrap"><table class="sum"><tr><th>Student</th><th>Attended</th><th>Missed</th><th>Total</th><th>%</th><th></th></tr>${rows}</table></div>`:'<p class="mute">No students in this department.</p>'}</div>`;
   document.getElementById("mo").onchange=e=>{if(e.target.value){sumMonth=e.target.value;render()}};
   document.getElementById("sd").onchange=e=>{sumDept=e.target.value;render()};
+  view.querySelectorAll("[data-wa]").forEach(b=>b.onclick=()=>sendWA(students.find(x=>x.id===b.dataset.wa),"month",sumMonth));
 }
 
 function monthList(a,b){
@@ -196,6 +197,27 @@ function dateSel(v){
 }
 function durSel(v){return `<select id="cm"><option value="">Select</option>${[...Array(36)].map((_,i)=>`<option value="${i+1}" ${v===i+1?"selected":""}>${i+1} month${i?"s":""}</option>`).join("")}</select>`}
 
+function waNum(n){const d=(n||"").replace(/\D/g,"");return d.length===10?"91"+d:d}
+async function reportText(s,scope,ym){
+  const td=today(),end=s.joined&&s.months?courseEnd(s.joined,s.months):"";
+  const last=end&&end<td?end:td;
+  const ms=scope==="month"?[ym]:monthList((s.joined||allFrom+"-01").slice(0,7),last.slice(0,7));
+  const lab=k=>{const [y,m]=k.split("-").map(Number);return MON[m-1]+" "+y};
+  let tp=0,tt=0;const lines=[],ab=[];
+  for(const k of ms){const m=await getMonth(k),x=stats(m,s.id);tp+=x.p;tt+=x.t;lines.push(lab(k)+": "+x.p+"/"+x.t);for(const d in m)if(m[d][s.id]==="A")ab.push(d)}
+  ab.sort();
+  let t="*BCTC Attendance Report*\nStudent: "+s.name+"\nDepartment: "+s.dept+"\n";
+  if(s.joined)t+="Joined: "+fmtD(s.joined)+(end?" | Course ends: "+fmtD(end):"")+"\n";
+  t+="\nPeriod: "+(scope==="month"?lab(ym):"Joining to "+fmtD(last))+"\nAttended: "+tp+"\nMissed: "+(tt-tp)+"\nTotal classes: "+tt+"\nAttendance: "+(tt?Math.round(tp*100/tt):0)+"%";
+  if(scope==="all"&&lines.length>1)t+="\n\nMonth-wise (attended/total):\n"+lines.join("\n");
+  if(ab.length)t+="\n\nAbsent on: "+ab.map(fmtD).join(", ");
+  return t+"\n\n- BCTC";
+}
+async function sendWA(s,scope,ym){
+  if(!s.wa)return toast("No WhatsApp number. Tap Edit in Students tab");
+  const t=await reportText(s,scope,ym);
+  window.open("https://wa.me/"+waNum(s.wa)+"?text="+encodeURIComponent(t),"_blank");
+}
 async function renderDetail(){
   const s=students.find(x=>x.id===detailId);
   if(!s){detailId=null;return renderStu()}
@@ -224,11 +246,13 @@ async function renderDetail(){
   view.innerHTML=`<button class="btn ghost" id="bk2" style="color:var(--acc);margin-bottom:10px">← Back</button>
   <div class="card"><b style="font-size:18px">${esc(s.name)}</b><div class="mute">${s.dept} · ${sched(s)}</div>
     <p>${courseLine(s)}<br>${end?"Course ends <b>"+fmtD(end)+"</b> · ":""}<b>${status}</b></p>${plan}</div>
+  <div class="card"><b>Send on WhatsApp</b>${s.wa?`<div class="row" style="margin:8px 0 0"><button class="btn" id="w1">This month</button><button class="btn" id="w2">Full report</button></div>`:'<p class="mute">No WhatsApp number. Tap Back, then Edit to add one.</p>'}</div>
   <div class="card"><b>Attendance</b>
     <p>Attended <b>${tp}</b> · Missed <b class="${tt-tp?"miss":""}">${tt-tp}</b> · Total ${tt} · <b>${tt?Math.round(tp*100/tt):0}%</b></p>
     <div class="wrap"><table class="sum"><tr><th>Month</th><th>Attended</th><th>Missed</th><th>Total</th><th>%</th></tr>${rows}</table></div></div>
   <div class="card"><b>Absent dates</b><p class="mute">${absent.length?absent.map(fmtD).join(" · "):"None"}</p></div>`;
   document.getElementById("bk2").onclick=()=>{detailId=null;render()};
+  const w1=document.getElementById("w1");if(w1){w1.onclick=()=>sendWA(s,"month",td.slice(0,7));document.getElementById("w2").onclick=()=>sendWA(s,"all")}
 }
 
 function renderStu(){
@@ -236,6 +260,7 @@ function renderStu(){
   const et=getTimes(e);
   view.innerHTML=`<div class="card"><b>${editId?"Edit student":"Add student"}</b>
     <div class="row" style="margin-top:8px"><input class="grow" id="nm" placeholder="Student name" value="${esc(e.name).replace(/"/g,"&quot;")}"><select id="dp">${DEPTS.map(d=>`<option ${d===e.dept?"selected":""}>${d}</option>`).join("")}</select></div>
+    <div class="row"><span class="mute">WhatsApp</span><input class="grow" type="tel" inputmode="tel" id="wa" placeholder="10-digit number" value="${esc(e.wa||"")}"></div>
     <div class="mute">Joining date</div><div class="row">${dateSel(e.joined)}</div>
     <div class="row"><span class="mute">Course duration</span>${durSel(e.months)}</div>
     <div class="mute">Class days and entry time for each day</div>
@@ -243,7 +268,7 @@ function renderStu(){
     <div class="row"><button class="btn" id="add">${editId?"Save changes":"Add"}</button>${editId?'<button class="btn ghost" id="cn" style="color:var(--ink)">Cancel</button>':""}</div></div>
     <div class="card"><b>Backup</b><p class="mute">Data lives on this device. Save a backup file regularly, and use Restore to load it on another phone.</p>
     <div class="row"><button class="btn" id="bk">Save backup</button><button class="btn" id="rs">Restore</button><input type="file" id="rf" accept=".json" hidden></div></div>
-    ${DEPTS.map(d=>{const l=students.filter(s=>s.dept===d);return `<div class="card"><b>${d}</b> <span class="mute">(${l.length})</span>${l.map(s=>`<div class="stu"><div>${esc(s.name)}<div class="mute">${sched(s)}</div><div class="mute">${courseLine(s)}</div></div><div class="row" style="margin:0"><button class="btn ghost" data-dt="${s.id}" style="color:var(--acc)">Details</button><button class="btn ghost" data-ed="${s.id}" style="color:var(--acc)">Edit</button><button class="btn ghost" data-id="${s.id}">Remove</button></div></div>`).join("")}</div>`}).join("")}`;
+    ${DEPTS.map(d=>{const l=students.filter(s=>s.dept===d);return `<div class="card"><b>${d}</b> <span class="mute">(${l.length})</span>${l.map(s=>`<div class="stu"><div>${esc(s.name)}<div class="mute">${sched(s)}</div><div class="mute">${courseLine(s)}</div><div class="mute">${s.wa?"WhatsApp +"+s.wa:"WhatsApp number not set"}</div></div><div class="row" style="margin:0"><button class="btn ghost" data-dt="${s.id}" style="color:var(--acc)">Details</button><button class="btn ghost" data-ed="${s.id}" style="color:var(--acc)">Edit</button><button class="btn ghost" data-id="${s.id}">Remove</button></div></div>`).join("")}</div>`}).join("")}`;
   document.getElementById("add").onclick=async()=>{
     const n=document.getElementById("nm").value.trim();
     const times={};let bad=false;
@@ -256,14 +281,16 @@ function renderStu(){
     const jd=+document.getElementById("jd").value,jm=+document.getElementById("jm").value,jy=+document.getElementById("jy").value;
     let joined="";if(jd&&jm&&jy&&new Date(jy,jm-1,jd).getMonth()===jm-1)joined=jy+"-"+pad(jm)+"-"+pad(jd);
     const months=+document.getElementById("cm").value;
+    const wa=waNum(document.getElementById("wa").value);
     if(!n)return toast("Enter the student's name");
+    if(wa.length<10||wa.length>15)return toast("Enter a valid WhatsApp number");
     if(!joined)return toast("Select a valid joining date");
     if(!months)return toast("Select course duration");
     if(!days.length)return toast("Select class days");
     if(bad)return toast("Set entry time for each selected day");
     const dept=document.getElementById("dp").value;
-    if(editId){Object.assign(students.find(s=>s.id===editId),{name:n,dept,days,times,time:times[days[0]],joined,months});editId=null}
-    else students.push({id:"s"+Date.now().toString(36)+Math.random().toString(36).slice(2,5),name:n,dept,days,times,time:times[days[0]],joined,months});
+    if(editId){Object.assign(students.find(s=>s.id===editId),{name:n,dept,days,times,time:times[days[0]],joined,months,wa});editId=null}
+    else students.push({id:"s"+Date.now().toString(36)+Math.random().toString(36).slice(2,5),name:n,dept,days,times,time:times[days[0]],joined,months,wa});
     if(await saveStudents())render();
   };
   view.querySelectorAll(".drow .day input").forEach(c=>c.onchange=()=>{

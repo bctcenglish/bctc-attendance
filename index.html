@@ -105,17 +105,31 @@ function sched(s){
   const t=getTimes(s),ds=Object.keys(t).map(Number).sort((a,b)=>a-b);
   return ds.length?ds.map(d=>DAYN[d]+(t[d]?" "+t12(t[d]):"")).join(", "):"Days not set";
 }
-function stats(m,id){let p=0,a=0;for(const d in m){const v=m[d][id];if(v==="P")p++;else if(v==="A")a++}return{p,a,t:p+a}}
+async function calc(s){
+  const keys=[];for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k.startsWith("att-"))keys.push(k.slice(4))}
+  const ev=[];
+  for(const ym of keys){const m=await getMonth(ym);for(const d in m){if(m[d][s.id])ev.push([d,m[d][s.id]]);if(m[d]["+"+s.id])ev.push([d,"M"])}}
+  ev.sort((a,b)=>a[0]<b[0]?-1:a[0]>b[0]?1:0);
+  const by={},g=ym=>by[ym]||(by[ym]={p:0,a:0,t:0,x:0,mk:0}),pend=[];
+  for(const [d,v] of ev){const y=g(d.slice(0,7));
+    if(v==="P"){y.p++;y.t++}
+    else if(v==="A"){y.a++;y.t++;pend.push(d)}
+    else if(v==="M"){if(pend.length)g(pend.shift().slice(0,7)).mk++;else y.x++}
+  }
+  return{by,pend};
+}
+function mstat(c,ym){const y=c.by[ym]||{p:0,a:0,t:0,x:0,mk:0};return{p:y.p+y.mk,a:y.a-y.mk,t:y.t,x:y.x}}
 
-let extraOn=false, extraSel=new Set();
+let extraOn=false, extraSel=new Set(), extraInit=false;
 async function renderMark(){
   const rec=(await getMonth(mDate.slice(0,7)))[mDate]||{};
   const wd=new Date(mDate+"T00:00:00").getDay();
   const dl=students.filter(s=>s.dept===mDept);
+  if(extraOn&&!extraInit){extraInit=true;dl.forEach(s=>{if(rec["+"+s.id])extraSel.add(s.id)})}
   const list=extraOn
     ?dl.filter(s=>extraSel.has(s.id))
     :dl.filter(s=>rec[s.id]||(active(s)&&(!s.days||!s.days.length||s.days.includes(wd)))).sort((a,b)=>(getTimes(a)[wd]||"").localeCompare(getTimes(b)[wd]||""));
-  list.forEach(s=>{if(!(s.id in marks))marks[s.id]=rec[s.id]||"P"});
+  list.forEach(s=>{if(!(s.id in marks))marks[s.id]=extraOn?"P":(rec[s.id]||"P")});
   const sub=s=>extraOn?"Extra / make-up class":getTimes(s)[wd]?"Entry "+t12(getTimes(s)[wd]):"Not scheduled on "+DAYN[wd];
   view.innerHTML=`<div class="card">
     <div class="row"><input type="date" id="d" value="${mDate}"><b>${DAYN[wd]}</b><select id="dp">${DEPTS.map(d=>`<option ${d===mDept?"selected":""}>${d}</option>`).join("")}</select></div>
@@ -123,8 +137,8 @@ async function renderMark(){
     ${extraOn?`<div class="mute" style="margin-top:10px">Tap the students attending this class</div><div class="row" style="margin-top:6px">${dl.length?dl.map(s=>`<label class="day"><input type="checkbox" data-x="${s.id}" ${extraSel.has(s.id)?"checked":""}> ${esc(s.name)}</label>`).join(""):'<span class="mute">No students in this department.</span>'}</div>`:""}
     ${list.length?list.map(s=>`<div class="stu"><div>${esc(s.name)}<div class="mute">${sub(s)}</div></div><button class="tog ${marks[s.id]==="A"?"a":""}" data-id="${s.id}">${marks[s.id]==="A"?"Absent":"Present"}</button></div>`).join(""):`<p class="mute">${extraOn?"Choose students above.":"No "+mDept+" students are scheduled on "+DAYN[wd]+"."}</p>`}
     </div>
-    ${list.length?'<button class="btn" id="save" style="width:100%">Save attendance</button><p class="mute">Everyone starts as Present — tap a name to mark Absent.</p>':""}`;
-  const reset=()=>{marks={};extraSel=new Set()};
+    ${list.length?`<button class="btn" id="save" style="width:100%">Save attendance</button><p class="mute">${extraOn?"Present = attended, and one of their missed classes is cancelled. Absent = not recorded.":"Everyone starts as Present — tap a name to mark Absent."}</p>`:""}`;
+  const reset=()=>{marks={};extraSel=new Set();extraInit=false};
   document.getElementById("d").onchange=e=>{if(e.target.value){mDate=e.target.value;reset();render()}};
   document.getElementById("dp").onchange=e=>{mDept=e.target.value;reset();render()};
   document.getElementById("xo").onchange=e=>{extraOn=e.target.checked;reset();render()};
@@ -136,8 +150,10 @@ async function renderMark(){
   const sv=document.getElementById("save");
   if(sv)sv.onclick=async()=>{
     const ym=mDate.slice(0,7),m=await getMonth(ym),out={};
-    list.forEach(s=>out[s.id]=marks[s.id]);
-    m[mDate]=Object.assign({},m[mDate]||{},out);
+    const cur=Object.assign({},m[mDate]||{});
+    if(extraOn){dl.forEach(s=>{if(extraSel.has(s.id)&&marks[s.id]!=="A")cur["+"+s.id]="M";else delete cur["+"+s.id]})}
+    else list.forEach(s=>cur[s.id]=marks[s.id]);
+    m[mDate]=cur;
     if(lsSet("att-"+ym,{records:m}))toast("Saved");
   };
 }
@@ -145,7 +161,8 @@ async function renderMark(){
 async function renderSum(){
   const m=await getMonth(sumMonth);
   const list=students.filter(s=>s.dept===sumDept);
-  const rows=list.map(s=>{const x=stats(m,s.id);
+  const C={};for(const s of list)C[s.id]=await calc(s);
+  const rows=list.map(s=>{const x=mstat(C[s.id],sumMonth);
     return `<tr><td>${esc(s.name)}<div class="mute">${sched(s)}</div></td><td>${x.p}</td><td class="${x.a?"miss":""}">${x.a}</td><td>${x.t}</td><td>${x.t?Math.round(x.p*100/x.t):0}%</td><td><button class="btn ghost" data-wa="${s.id}" style="padding:4px 8px">💬</button></td></tr>`}).join("");
   view.innerHTML=`<div class="card"><div class="row"><input type="month" id="mo" value="${sumMonth}"><select id="sd">${DEPTS.map(d=>`<option ${d===sumDept?"selected":""}>${d}</option>`).join("")}</select></div>
     <p class="mute">Counted from the days you saved for each student.</p>
@@ -163,12 +180,12 @@ function monthList(a,b){
 async function renderAll(){
   const ms=monthList(allFrom,allTo);
   const list=students.filter(s=>s.dept===allDept);
-  const data={};for(const ym of ms)data[ym]=await getMonth(ym);
+  const C={};for(const s of list)C[s.id]=await calc(s);
   const lab=ym=>{const [y,m]=ym.split("-").map(Number);return new Date(y,m-1,1).toLocaleString("en",{month:"short"})+" '"+String(y).slice(2)};
   const head=`<tr><th>Student</th>${ms.map(ym=>`<th>${lab(ym)}</th>`).join("")}<th>Attended</th><th>Missed</th><th>%</th></tr>`;
   const rows=list.map(s=>{
     let tp=0,tt=0;
-    const cells=ms.map(ym=>{const x=stats(data[ym],s.id);tp+=x.p;tt+=x.t;return `<td>${x.t?x.p+"/"+x.t:"–"}</td>`}).join("");
+    const cells=ms.map(ym=>{const x=mstat(C[s.id],ym);tp+=x.p;tt+=x.t;return `<td>${x.t?x.p+"/"+x.t:"–"}</td>`}).join("");
     const miss=tt-tp;
     return `<tr><td>${esc(s.name)}</td>${cells}<td class="t">${tp}</td><td class="${miss?"miss":""}">${miss}</td><td>${tt?Math.round(tp*100/tt):0}%</td></tr>`;
   }).join("");
@@ -212,12 +229,14 @@ async function reportText(s,scope,ym){
   const ms=scope==="month"?[ym]:monthList((s.joined||allFrom+"-01").slice(0,7),last.slice(0,7));
   const lab=k=>{const [y,m]=k.split("-").map(Number);return MON[m-1]+" "+y};
   let tp=0,tt=0;const lines=[],ab=[];
-  for(const k of ms){const m=await getMonth(k),x=stats(m,s.id);tp+=x.p;tt+=x.t;lines.push(lab(k)+": "+x.p+"/"+x.t);for(const d in m)if(m[d][s.id]==="A")ab.push(d)}
+  const c=await calc(s);ab.push(...c.pend);let mkT=0;
+  for(const k of ms){const x=mstat(c,k);tp+=x.p;tt+=x.t;lines.push(lab(k)+": "+x.p+"/"+x.t);if(c.by[k])mkT+=c.by[k].mk+c.by[k].x}
   ab.sort();
   let t="*BCTC Attendance Report*\nStudent: "+s.name+"\nDepartment: "+s.dept+"\n";
   if(s.joined)t+="Joined: "+fmtD(s.joined)+(end?" | Course ends: "+fmtD(end):"")+"\n";
   t+="\nPeriod: "+(scope==="month"?lab(ym):"Joining to "+fmtD(last))+"\nAttended: "+tp+"\nMissed: "+(tt-tp)+"\nTotal classes: "+tt+"\nAttendance: "+(tt?Math.round(tp*100/tt):0)+"%";
   if(scope==="all"&&lines.length>1)t+="\n\nMonth-wise (attended/total):\n"+lines.join("\n");
+  if(mkT)t+="\n\nMake-up classes attended: "+mkT;
   if(ab.length)t+="\n\nAbsent on: "+ab.map(fmtD).join(", ");
   return t+"\n\n- BCTC";
 }
@@ -235,10 +254,9 @@ async function renderDetail(){
   const from=(s.joined||allFrom+"-01").slice(0,7);
   let status="Course dates not set";
   if(end){status=td>end?"Course completed":td<s.joined?"Starts "+fmtD(s.joined):Math.ceil((new Date(end+"T00:00:00")-new Date(td+"T00:00:00"))/864e5)+" days left"}
-  let rows="",tp=0,tt=0;const absent=[];
+  let rows="",tp=0,tt=0,mk=0;const c=await calc(s),absent=[...c.pend];
   for(const ym of monthList(from,last.slice(0,7))){
-    const m=await getMonth(ym),x=stats(m,s.id);tp+=x.p;tt+=x.t;
-    for(const d in m)if(m[d][s.id]==="A")absent.push(d);
+    const x=mstat(c,ym);tp+=x.p;tt+=x.t;if(c.by[ym])mk+=c.by[ym].mk+c.by[ym].x;
     const [y,mo]=ym.split("-").map(Number);
     rows+=`<tr><td>${MON[mo-1]} ${y}</td><td>${x.p}</td><td class="${x.a?"miss":""}">${x.a}</td><td>${x.t}</td><td>${x.t?Math.round(x.p*100/x.t):0}%</td></tr>`;
   }
@@ -256,9 +274,9 @@ async function renderDetail(){
     <p>${courseLine(s)}<br>${end?"Course ends <b>"+fmtD(end)+"</b> · ":""}<b>${status}</b></p>${plan}</div>
   <div class="card"><b>Send on WhatsApp</b>${s.wa?`<div class="row" style="margin:8px 0 0"><button class="btn" id="w1">This month</button><button class="btn" id="w2">Full report</button></div>`:'<p class="mute">No WhatsApp number. Tap Back, then Edit to add one.</p>'}</div>
   <div class="card"><b>Attendance</b>
-    <p>Attended <b>${tp}</b> · Missed <b class="${tt-tp?"miss":""}">${tt-tp}</b> · Total ${tt} · <b>${tt?Math.round(tp*100/tt):0}%</b></p>
+    <p>Attended <b>${tp}</b> · Missed <b class="${tt-tp?"miss":""}">${tt-tp}</b> · Total ${tt} · <b>${tt?Math.round(tp*100/tt):0}%</b></p>${mk?`<p class="mute">Make-up classes attended: ${mk}</p>`:""}
     <div class="wrap"><table class="sum"><tr><th>Month</th><th>Attended</th><th>Missed</th><th>Total</th><th>%</th></tr>${rows}</table></div></div>
-  <div class="card"><b>Absent dates</b><p class="mute">${absent.length?absent.map(fmtD).join(" · "):"None"}</p></div>`;
+  <div class="card"><b>Absent dates (not made up yet)</b><p class="mute">${absent.length?absent.map(fmtD).join(" · "):"None"}</p></div>`;
   document.getElementById("bk2").onclick=()=>{detailId=null;render()};
   const w1=document.getElementById("w1");if(w1){w1.onclick=()=>sendWA(s,"month",td.slice(0,7));document.getElementById("w2").onclick=()=>sendWA(s,"all")}
 }

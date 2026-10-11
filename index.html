@@ -80,7 +80,7 @@ async function getMonth(ym){
 async function saveStudents(){return lsSet("students",students)}
 
 document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{
-  tab=b.dataset.t;detailId=null;
+  tab=b.dataset.t;detailId=null;marks={};
   document.querySelectorAll(".tabs button").forEach(x=>x.classList.toggle("on",x===b));
   render();
 });
@@ -107,29 +107,37 @@ function sched(s){
 }
 function stats(m,id){let p=0,a=0;for(const d in m){const v=m[d][id];if(v==="P")p++;else if(v==="A")a++}return{p,a,t:p+a}}
 
+let extraOn=false, extraSel=new Set();
 async function renderMark(){
   const rec=(await getMonth(mDate.slice(0,7)))[mDate]||{};
   const wd=new Date(mDate+"T00:00:00").getDay();
   const dl=students.filter(s=>s.dept===mDept);
-  const list=(showAll?dl:dl.filter(s=>rec[s.id]||(active(s)&&(!s.days||!s.days.length||s.days.includes(wd))))).sort((a,b)=>(getTimes(a)[wd]||"").localeCompare(getTimes(b)[wd]||""));
-  marks={};list.forEach(s=>marks[s.id]=rec[s.id]||"P");
+  const list=extraOn
+    ?dl.filter(s=>extraSel.has(s.id))
+    :dl.filter(s=>rec[s.id]||(active(s)&&(!s.days||!s.days.length||s.days.includes(wd)))).sort((a,b)=>(getTimes(a)[wd]||"").localeCompare(getTimes(b)[wd]||""));
+  list.forEach(s=>{if(!(s.id in marks))marks[s.id]=rec[s.id]||"P"});
+  const sub=s=>extraOn?"Extra / make-up class":getTimes(s)[wd]?"Entry "+t12(getTimes(s)[wd]):"Not scheduled on "+DAYN[wd];
   view.innerHTML=`<div class="card">
     <div class="row"><input type="date" id="d" value="${mDate}"><b>${DAYN[wd]}</b><select id="dp">${DEPTS.map(d=>`<option ${d===mDept?"selected":""}>${d}</option>`).join("")}</select></div>
-    <label class="mute"><input type="checkbox" id="sa" ${showAll?"checked":""}> Show all students (for extra or make-up class)</label>
-    ${list.length?list.map(s=>`<div class="stu"><div>${esc(s.name)}<div class="mute">${getTimes(s)[wd]?"Entry "+t12(getTimes(s)[wd]):"Not scheduled on "+DAYN[wd]}</div></div><button class="tog ${marks[s.id]==="A"?"a":""}" data-id="${s.id}">${marks[s.id]==="A"?"Absent":"Present"}</button></div>`).join(""):`<p class="mute">No ${mDept} students are scheduled on ${DAYN[wd]}.</p>`}
+    <label class="mute"><input type="checkbox" id="xo" ${extraOn?"checked":""}> Extra / make-up class (choose students)</label>
+    ${extraOn?`<div class="mute" style="margin-top:10px">Tap the students attending this class</div><div class="row" style="margin-top:6px">${dl.length?dl.map(s=>`<label class="day"><input type="checkbox" data-x="${s.id}" ${extraSel.has(s.id)?"checked":""}> ${esc(s.name)}</label>`).join(""):'<span class="mute">No students in this department.</span>'}</div>`:""}
+    ${list.length?list.map(s=>`<div class="stu"><div>${esc(s.name)}<div class="mute">${sub(s)}</div></div><button class="tog ${marks[s.id]==="A"?"a":""}" data-id="${s.id}">${marks[s.id]==="A"?"Absent":"Present"}</button></div>`).join(""):`<p class="mute">${extraOn?"Choose students above.":"No "+mDept+" students are scheduled on "+DAYN[wd]+"."}</p>`}
     </div>
     ${list.length?'<button class="btn" id="save" style="width:100%">Save attendance</button><p class="mute">Everyone starts as Present — tap a name to mark Absent.</p>':""}`;
-  document.getElementById("d").onchange=e=>{if(e.target.value){mDate=e.target.value;render()}};
-  document.getElementById("dp").onchange=e=>{mDept=e.target.value;render()};
-  document.getElementById("sa").onchange=e=>{showAll=e.target.checked;render()};
+  const reset=()=>{marks={};extraSel=new Set()};
+  document.getElementById("d").onchange=e=>{if(e.target.value){mDate=e.target.value;reset();render()}};
+  document.getElementById("dp").onchange=e=>{mDept=e.target.value;reset();render()};
+  document.getElementById("xo").onchange=e=>{extraOn=e.target.checked;reset();render()};
+  view.querySelectorAll("[data-x]").forEach(c=>c.onchange=()=>{c.checked?extraSel.add(c.dataset.x):extraSel.delete(c.dataset.x);render()});
   view.querySelectorAll(".tog").forEach(b=>b.onclick=()=>{
     const id=b.dataset.id;marks[id]=marks[id]==="A"?"P":"A";
     b.classList.toggle("a",marks[id]==="A");b.textContent=marks[id]==="A"?"Absent":"Present";
   });
   const sv=document.getElementById("save");
   if(sv)sv.onclick=async()=>{
-    const ym=mDate.slice(0,7),m=await getMonth(ym);
-    m[mDate]=Object.assign({},m[mDate]||{},marks);
+    const ym=mDate.slice(0,7),m=await getMonth(ym),out={};
+    list.forEach(s=>out[s.id]=marks[s.id]);
+    m[mDate]=Object.assign({},m[mDate]||{},out);
     if(lsSet("att-"+ym,{records:m}))toast("Saved");
   };
 }

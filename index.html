@@ -125,16 +125,17 @@ async function renderMark(){
   const rec=(await getMonth(mDate.slice(0,7)))[mDate]||{};
   const wd=new Date(mDate+"T00:00:00").getDay();
   const dl=students.filter(s=>s.dept===mDept);
-  if(extraOn&&!extraInit){extraInit=true;dl.forEach(s=>{if(rec["+"+s.id])extraSel.add(s.id)})}
+  const legacy=s=>!!rec[s.id]&&s.days&&s.days.length&&!s.days.includes(wd);
+  if(extraOn&&!extraInit){extraInit=true;dl.forEach(s=>{if(rec["+"+s.id]||legacy(s))extraSel.add(s.id)})}
   const list=extraOn
     ?dl.filter(s=>extraSel.has(s.id))
     :dl.filter(s=>rec[s.id]||(active(s)&&(!s.days||!s.days.length||s.days.includes(wd)))).sort((a,b)=>(getTimes(a)[wd]||"").localeCompare(getTimes(b)[wd]||""));
-  list.forEach(s=>{if(!(s.id in marks))marks[s.id]=extraOn?"P":(rec[s.id]||"P")});
+  list.forEach(s=>{if(!(s.id in marks))marks[s.id]=extraOn?(legacy(s)&&rec[s.id]==="A"?"A":"P"):(rec[s.id]||"P")});
   const sub=s=>extraOn?"Extra / make-up class":getTimes(s)[wd]?"Entry "+t12(getTimes(s)[wd]):"Not scheduled on "+DAYN[wd];
   view.innerHTML=`<div class="card">
     <div class="row"><input type="date" id="d" value="${mDate}"><b>${DAYN[wd]}</b><select id="dp">${DEPTS.map(d=>`<option ${d===mDept?"selected":""}>${d}</option>`).join("")}</select></div>
     <label class="mute"><input type="checkbox" id="xo" ${extraOn?"checked":""}> Extra / make-up class (choose students)</label>
-    ${extraOn?`<div class="mute" style="margin-top:10px">Tap the students attending this class</div><div class="row" style="margin-top:6px">${dl.length?dl.map(s=>`<label class="day"><input type="checkbox" data-x="${s.id}" ${extraSel.has(s.id)?"checked":""}> ${esc(s.name)}</label>`).join(""):'<span class="mute">No students in this department.</span>'}</div>`:""}
+    ${extraOn?`<div class="mute" style="margin-top:10px">Tap the students attending this class</div>${dl.some(s=>legacy(s)&&extraSel.has(s.id))?'<div class="mute">Older entries on this date will be converted to make-up classes when you save.</div>':""}<div class="row" style="margin-top:6px">${dl.length?dl.map(s=>`<label class="day"><input type="checkbox" data-x="${s.id}" ${extraSel.has(s.id)?"checked":""}> ${esc(s.name)}</label>`).join(""):'<span class="mute">No students in this department.</span>'}</div>`:""}
     ${list.length?list.map(s=>`<div class="stu"><div>${esc(s.name)}<div class="mute">${sub(s)}</div></div><button class="tog ${marks[s.id]==="A"?"a":""}" data-id="${s.id}">${marks[s.id]==="A"?"Absent":"Present"}</button></div>`).join(""):`<p class="mute">${extraOn?"Choose students above.":"No "+mDept+" students are scheduled on "+DAYN[wd]+"."}</p>`}
     </div>
     ${list.length?`<button class="btn" id="save" style="width:100%">Save attendance</button><p class="mute">${extraOn?"Present = attended, and one of their missed classes is cancelled. Absent = not recorded.":"Everyone starts as Present — tap a name to mark Absent."}</p>`:""}`;
@@ -151,7 +152,7 @@ async function renderMark(){
   if(sv)sv.onclick=async()=>{
     const ym=mDate.slice(0,7),m=await getMonth(ym),out={};
     const cur=Object.assign({},m[mDate]||{});
-    if(extraOn){dl.forEach(s=>{if(extraSel.has(s.id)&&marks[s.id]!=="A")cur["+"+s.id]="M";else delete cur["+"+s.id]})}
+    if(extraOn){dl.forEach(s=>{if(extraSel.has(s.id)&&marks[s.id]!=="A")cur["+"+s.id]="M";else delete cur["+"+s.id];if(extraSel.has(s.id)&&legacy(s))delete cur[s.id]})}
     else list.forEach(s=>cur[s.id]=marks[s.id]);
     m[mDate]=cur;
     if(lsSet("att-"+ym,{records:m}))toast("Saved");
